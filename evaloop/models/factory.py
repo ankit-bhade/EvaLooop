@@ -4,8 +4,6 @@ import logging
 from typing import Dict, Any
 
 from .base import BaseLLM
-from .open_source import HuggingFaceLLM
-from .open_source_vllm import VllmLLM
 from .closed_source import OpenAILLM
 from .openai_compatible import OpenAICompatibleLLM
 
@@ -43,9 +41,13 @@ class ModelFactory:
         
         self.logger.debug(f"Creating model with config: {sanitized_config}")
         
+        # Local backends are imported only when used: they need torch (and vLLM
+        # raises on import without a GPU install), which API-only runs don't have.
         if model_type in ["llama", "deepseek", "huggingface", "open_source"]:
+            from .open_source import HuggingFaceLLM
             return HuggingFaceLLM(model_config)
         elif model_type in ["vllm"]:
+            from .open_source_vllm import VllmLLM
             return VllmLLM(model_config)
         elif model_type in ["openai", "chatgpt", "closed_source"]:
             return OpenAILLM(model_config)

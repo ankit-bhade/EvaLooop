@@ -179,6 +179,18 @@ class TestOpenAICompatibleLLM:
         assert llm.generate("q") == message
 
 
+def test_factory_creates_endpoint_model_without_local_backends():
+    # The test environment has neither torch nor vLLM, like a CPU-only Colab runtime
+    pytest.importorskip("openai")
+    from evaloop.models.factory import ModelFactory
+    from evaloop.models.openai_compatible import OpenAICompatibleLLM
+
+    model = ModelFactory().create_model({
+        "type": "openai_compatible", "name": "m", "model_id": "m", "api_key": "sk-test", "base_url": OPENROUTER,
+    })
+    assert isinstance(model, OpenAICompatibleLLM)
+
+
 class _BatchModel:
     def __init__(self, error):
         self.error = error
