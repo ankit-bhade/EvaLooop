@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 from pathlib import Path
 
 from .config import EvaluationConfig
+from .run_state import load_checkpoint, save_checkpoint, select_task_subset
 from ..models.factory import ModelFactory
 from ..tasks.factory import TaskFactory
 from ..evaluation.cycle import BatchEvaluationCycle
@@ -54,6 +55,7 @@ class EvaLoopEvaluator:
         
         # Save and return results
         self._save_results([model_result], "code_generation_summarization")
+        Path(self.config.output_dir, f"{self.config.experiment_name}_checkpoint.json").unlink(missing_ok=True)
         return [model_result]
     
     def run_code_translation(self) -> Dict[str, Any]:
@@ -94,7 +96,8 @@ class EvaLoopEvaluator:
                 "task_id": task_id,
                 "prompt": problem["prompt"]
             })
-        
+
+        prompts = select_task_subset(prompts, self.config.max_tasks, self.config.subset_seed)
         self.logger.info(f"Prepared {len(prompts)} prompts from MBPP dataset")
         return prompts, py_problems
     
@@ -116,7 +119,17 @@ class EvaLoopEvaluator:
         # Run cycles until max_cycles or all prompts fail
         current_prompts = prompts.copy()
         current_cycle = 0
-        
+
+        # Saved after every cycle, so an interrupted run can continue with --resume
+        checkpoint_path = Path(self.config.output_dir) / f"{self.config.experiment_name}_checkpoint.json"
+        if self.config.resume:
+            state = load_checkpoint(checkpoint_path, model_result)
+            if state:
+                model_result = state["model_result"]
+                current_cycle = state["completed_cycle"]
+                current_prompts = state["next_prompts"]
+                self.logger.info(f"Resuming after cycle {current_cycle} with {len(current_prompts)} tasks left")
+
         while current_cycle < self.config.max_cycles and current_prompts:
             current_cycle += 1
             self.logger.info(f"Starting cycle {current_cycle}/{self.config.max_cycles}")
@@ -128,7 +141,8 @@ class EvaLoopEvaluator:
             current_prompts = self._process_cycle_results(
                 cycle_output, model_result, tasks, py_problems, tester, current_cycle
             )
-            
+            save_checkpoint(checkpoint_path, model_result, current_cycle, current_prompts)
+
             if not current_prompts:
                 self.logger.info(f"All prompts failed or completed after cycle {current_cycle}")
                 break
@@ -142,8 +156,15 @@ class EvaLoopEvaluator:
         """Initialize the model result structure."""
         model_result = {
             "model": str(model),
+            # API model id (e.g. "google/gemma-3-12b-it"); None for local models
+            "model_id": getattr(model, "model_id", None),
             # Loop budget M; needed by the analyzer to normalize the ASL metrics
             "max_cycles": self.config.max_cycles,
+            # Loop variant, so result files say which configuration produced them
+            "summary_language": self.config.summary_language or "english",
+            # Task subset (None = all tasks); the same values select the same tasks
+            "max_tasks": self.config.max_tasks,
+            "subset_seed": self.config.subset_seed,
             "prompt_results": []
         }
         
@@ -204,7 +225,9 @@ class EvaLoopEvaluator:
         test_results = self._test_python_code(code_output, task_id, problem, tester)
         
         # Store test results
-        test_results["plus_details"] = "".join(map(str, test_results["plus_details"]))
+        # Absent when the tester itself raised (it then returns only "success" and "error")
+        if "plus_details" in test_results:
+            test_results["plus_details"] = "".join(map(str, test_results["plus_details"]))
         cycle_result["test_results"] = test_results
         
         return test_results.get("success", False)

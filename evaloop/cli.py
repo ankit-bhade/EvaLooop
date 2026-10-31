@@ -74,6 +74,7 @@ class EvaLoopCLI:
         max_cycles: int = 10,
         temperature: float = 0.0,
         top_p: float = 1.0,
+        summary_language: Optional[str] = None,
         output_dir: str = "results/",
         log_level: str = "INFO",
         experiment_name: Optional[str] = None,
@@ -92,6 +93,13 @@ class EvaLoopCLI:
         preferred_batch_size: int = 64,
         is_chat_model: bool = True,
         system_prompt: str = "You are a helpful programming assistant.",
+        api_base_url: Optional[str] = None,
+        api_key_env: str = "OPENAI_API_KEY",
+        api_provider: Optional[str] = None,
+        api_concurrency: int = 16,
+        max_tasks: Optional[int] = None,
+        subset_seed: int = 0,
+        resume: bool = False,
     ) -> Dict[str, Any]:
         """
         Run code generation and summarization evaluation experiment.
@@ -110,6 +118,8 @@ class EvaLoopCLI:
             max_cycles: Maximum number of evaluation cycles to run.
             temperature: Temperature for model generation (0.0 for greedy decoding).
             top_p: Top-p (nucleus) sampling parameter.
+            summary_language: Natural language for the summaries (e.g. "spanish").
+                   None or "english" runs the standard loop.
             output_dir: Directory to save results.
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
             experiment_name: Name for the experiment (auto-generated if None).
@@ -128,6 +138,15 @@ class EvaLoopCLI:
             preferred_batch_size: Preferred batch size when auto-batching.
             is_chat_model: Whether the model is a chat/instruction-tuned model.
             system_prompt: System prompt for chat models.
+            api_base_url: OpenAI-compatible endpoint (e.g. "https://openrouter.ai/api/v1"). When set,
+                   the model name is sent to it as-is and requests run concurrently.
+            api_key_env: Environment variable holding the endpoint's API key.
+            api_provider: OpenRouter only: comma-separated providers to pin (no fallbacks),
+                   e.g. "deepinfra/bf16", so every run of a model uses the same backend.
+            api_concurrency: Maximum parallel requests to the endpoint.
+            max_tasks: Evaluate a seeded random subset of this many tasks (default: all).
+            subset_seed: Seed of the task subset; the same seed selects the same tasks.
+            resume: Continue an interrupted run from its checkpoint (needs --experiment_name).
 
         Returns:
             Dictionary containing evaluation results with successful cycles for each task.
@@ -186,6 +205,7 @@ class EvaLoopCLI:
             max_cycles=max_cycles,
             temperature=temperature,
             top_p=top_p,
+            summary_language=summary_language,
             output_dir=output_dir,
             experiment_name=experiment_name,
             gpu_ids=gpu_id_list,
@@ -203,6 +223,13 @@ class EvaLoopCLI:
             is_chat_model=is_chat_model,
             system_prompt=system_prompt,
             openai_api_key=openai_api_key,
+            api_base_url=api_base_url,
+            api_key_env=api_key_env,
+            api_provider=api_provider,
+            api_concurrency=api_concurrency,
+            max_tasks=max_tasks,
+            subset_seed=subset_seed,
+            resume=resume,
         )
         # Log model type detection results
         model_config = config.get_model_config()
@@ -214,7 +241,7 @@ class EvaLoopCLI:
                            f"batch_size={model_config['batch_config']['preferred_batch_size']}")
         elif model_type == "huggingface":
             self.logger.info(f"  HuggingFace config: device={model_config['device']}")
-        elif model_type in ["openai", "anthropic"]:
+        elif model_type in ["openai", "anthropic", "openai_compatible"]:
             self.logger.info(f"  API config: model_id={model_config['model_id']}")
 
         # Create and run evaluator

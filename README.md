@@ -85,6 +85,82 @@ This is intentional, not an artifact: keeping one assert anchors the function na
 
 Want to add your own loop? A new task type is one new file plus a registry entry — no changes to the loop runner. See the [Contributing Guide](CONTRIBUTING.md).
 
+### Multilingual summary loop (fork extension)
+
+The same generation ↔ summarization loop, except the model writes its one-sentence summary in another
+natural language. The code-generation prompt stays in English, so each cycle the model implements its own
+non-English description of its previous code:
+
+```bash
+evaloop evaluate --model "gpt-4o-mini" --summary_language spanish
+```
+
+| | Standard loop | Multilingual loop |
+|---|---|---|
+| Generation prompt | `Generate Python code for the following task: …` | unchanged |
+| Summary prompt | `Use one sentence to summarize … start with 'write a python function to'` | `Use one sentence written in Spanish to summarize … start with 'escribe una función de Python que'` |
+| Carried to the next cycle | summary + original assert line, wrapped in `"""` | same: the summary is in Spanish, the assert line is unchanged |
+| Failure condition | code fails the MBPP+ base or plus tests | unchanged |
+
+The function signature stays stable the same way as in the standard loop: the task inherits
+`CodeSummarizationTask.postprocess`, which re-attaches the original assert line. Built-in languages are
+spanish, french, german, chinese and hindi (`STARTER_PHRASES`); add another language there or pass
+`starter_phrase` in the task config. `--summary_language english` (or leaving it out) runs the standard loop.
+
+**What changed in the existing framework, and why:**
+
+- New file `evaloop/tasks/code_summarization_multilingual.py`: the new task. It only overrides the prompt,
+  so extraction and the assert-line logic are identical to the standard loop.
+- `evaloop/tasks/__init__.py`: one import, which registers the task.
+- `evaloop/core/config.py`: a `summary_language` field. `get_task_configs()` picks the new task when it is set,
+  and the default experiment name gets a `_summary_<language>` suffix.
+- `evaloop/core/evaluator.py`: results files record `summary_language`, so each run says which loop produced it.
+- `evaloop/cli.py`: the `--summary_language` flag.
+- New file `tests/test_multilingual.py`: unit tests, including a check that the prompt differs from the
+  standard one only in the language and the opening phrase.
+
+### Running hosted models (OpenRouter) and long runs (fork extension)
+
+Any OpenAI-compatible endpoint can serve the evaluated model. The fork's experiments use OpenRouter with
+one pinned provider per model, and run on Google Colab so generated code never executes on a personal
+machine ([`notebooks/run_on_colab.ipynb`](notebooks/run_on_colab.ipynb) does every step):
+
+```bash
+export OPENROUTER_API_KEY=...   # never commit it
+evaloop evaluate --model "google/gemma-3-12b-it" \
+                 --api_base_url "https://openrouter.ai/api/v1" --api_key_env OPENROUTER_API_KEY \
+                 --api_provider "deepinfra/bf16" --api_concurrency 16 \
+                 --summary_language spanish --experiment_name gemma_spanish --resume
+python scripts/summarize_runs.py results/*_results.json --output summary.csv
+```
+
+| Option | What it does |
+|---|---|
+| `--api_base_url`, `--api_key_env` | Send the model name as-is to this endpoint (`OpenAICompatibleLLM`), reading the key from the named environment variable. Generations are capped at `--max_new_tokens` (1024), as in the paper. |
+| `--api_provider` | OpenRouter provider(s) to pin, with fallbacks off, so every run of a model hits the same backend. |
+| `--api_concurrency` | Parallel requests; the loop then runs in batch mode. |
+| `--max_tasks`, `--subset_seed` | Seeded random subset of tasks (dataset order kept); the same values select the same tasks. Recorded in the results. |
+| `--resume` | Continue an interrupted run from `<experiment_name>_checkpoint.json`, written after every cycle and removed when the run finishes. |
+
+Endpoint failures (network, credits, provider outages) raise `ModelUnavailableError`, which stops the run
+instead of being tested as code and counted as a robustness failure; resume afterwards.
+
+**Further changes to the existing framework, and why:**
+
+- New `evaloop/models/openai_compatible.py` (`OpenAICompatibleLLM`, built on `OpenAILLM`): concurrent
+  `batch_generate`, provider pinning, and raising on endpoint errors (`OpenAILLM` returns error strings,
+  which the loop would test as code).
+- `evaloop/models/base.py`: `ModelUnavailableError`. `evaloop/evaluation/cycle.py`: lets it propagate
+  instead of failing the cycle. `evaloop/models/factory.py`: the `openai_compatible` type.
+- `evaloop/core/config.py` and `evaloop/cli.py`: the options above; `--api_base_url` routes any model name
+  to the endpoint (previously names without "gpt"/"claude" went to local HuggingFace).
+- New `evaloop/core/run_state.py`: task subsets and checkpoints. `evaloop/core/evaluator.py`: uses them,
+  and records `model_id`, `max_tasks` and `subset_seed` in results.
+- `evaloop/core/evaluator.py`: no longer crashes with `KeyError: 'plus_details'` when the tester itself
+  fails (it returns only `success` and `error` then).
+- New `scripts/summarize_runs.py` (summary.csv: pass@1 and ASL_pow per run), `notebooks/run_on_colab.ipynb`,
+  and `tests/test_endpoint_and_run_state.py`.
+
 ## 🛠️ CLI Reference
 
 ### `evaluate` — Code Generation ↔ Summarization

@@ -1,6 +1,15 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 
+
+class ModelUnavailableError(RuntimeError):
+    """The model endpoint failed (network, quota, provider outage), not the model's output.
+
+    The loop runner lets this propagate instead of recording it as a failed
+    cycle, so an API problem can never be counted as a robustness failure.
+    """
+
+
 class BaseLLM(ABC):
     """Base class for all LLM implementations."""
     

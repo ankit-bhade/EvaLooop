@@ -2,6 +2,8 @@ import logging
 from typing import Dict, Any, List
 from tqdm import tqdm
 
+from ..models.base import ModelUnavailableError
+
 class BatchEvaluationCycle:
     """Manages batch evaluation cycles for LLM testing with support for vLLM batch processing."""
     
@@ -125,7 +127,10 @@ class BatchEvaluationCycle:
                             cycle_result[f"task_{task_idx + 1}_error"] = "Empty prompt generated"
                             # Remove current input to prevent further processing
                             del cycle_result["_current_input"]
-                
+
+            except ModelUnavailableError:
+                # An endpoint failure is not a model failure: stop the run instead of failing the tasks
+                raise
             except Exception as e:
                 self.logger.error(f"Error in batch processing task {task_name}: {str(e)}")
                 # Mark all remaining prompts as failed for this task
@@ -208,7 +213,9 @@ class BatchEvaluationCycle:
                 
                 # Update the input for the next task
                 current_input = output
-                
+
+            except ModelUnavailableError:
+                raise
             except Exception as e:
                 self.logger.error(f"Error in task {task_name} for {task_id}: {str(e)}")
                 cycle_results[f"task_{i+1}_error"] = str(e)

@@ -22,7 +22,11 @@ class EvaluationConfig:
     temperature: float = 0.0
     top_p: float = 1.0
     batch_size: int = 1
-    
+
+    # Loop configuration: natural language of the summaries (None or
+    # "english" = the standard loop; see code_summarization_multilingual.py)
+    summary_language: Optional[str] = None
+
     # Output configuration
     output_dir: str = "results/"
     experiment_name: Optional[str] = None
@@ -50,7 +54,20 @@ class EvaluationConfig:
     
     # API configuration
     openai_api_key: Optional[str] = None
-    
+
+    # OpenAI-compatible endpoint (e.g. OpenRouter). When set, the model name is
+    # sent to this endpoint as-is, whatever it looks like.
+    api_base_url: Optional[str] = None
+    api_key_env: str = "OPENAI_API_KEY"
+    # OpenRouter only: comma-separated providers to pin, without fallbacks
+    api_provider: Optional[str] = None
+    api_concurrency: int = 16
+
+    # Task subset and resuming
+    max_tasks: Optional[int] = None
+    subset_seed: int = 0
+    resume: bool = False
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if not self.model:
@@ -73,7 +90,21 @@ class EvaluationConfig:
         
         if self.max_model_len <= 0:
             raise ValueError("max_model_len must be positive")
-        
+
+        if self.api_concurrency <= 0:
+            raise ValueError("api_concurrency must be positive")
+
+        if self.max_tasks is not None and self.max_tasks <= 0:
+            raise ValueError("max_tasks must be positive")
+
+        if self.resume and not self.experiment_name:
+            raise ValueError("resume needs an explicit experiment_name (the checkpoint is named after it)")
+
+        if self.summary_language is not None:
+            self.summary_language = self.summary_language.strip().lower()
+            if self.summary_language in ("", "english"):
+                self.summary_language = None
+
         # Create output directory
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         
@@ -91,8 +122,9 @@ class EvaluationConfig:
         
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         model_name = self._sanitize_model_name(self.model)
-        
-        return f"evaloop_{model_name}_{self.dataset}_{timestamp}"
+        loop_suffix = f"_summary_{self.summary_language}" if self.summary_language else ""
+
+        return f"evaloop_{model_name}_{self.dataset}{loop_suffix}_{timestamp}"
     
     def _sanitize_model_name(self, model_name: str) -> str:
         """Sanitize model name for use in file names."""
@@ -113,6 +145,11 @@ class EvaluationConfig:
             "temperature": self.temperature,
             "top_p": self.top_p,
             "batch_size": self.batch_size,
+            "summary_language": self.summary_language,
+            "api_base_url": self.api_base_url,
+            "api_provider": self.api_provider,
+            "max_tasks": self.max_tasks,
+            "subset_seed": self.subset_seed,
             "output_dir": self.output_dir,
             "experiment_name": self.experiment_name,
             "gpu_ids": self.gpu_ids,
@@ -128,6 +165,9 @@ class EvaluationConfig:
     
     def _create_model_config(self, model: str) -> Dict[str, Any]:
         """Create configuration for a specific model."""
+        if self.api_base_url:
+            return self._create_endpoint_model_config(model)
+
         # Determine model type based on model name/path
         if any(provider in model.lower() for provider in ["gpt", "chatgpt", "openai"]):
             model_type = "openai"
@@ -214,6 +254,25 @@ class EvaluationConfig:
         
         return base_config
     
+    def _create_endpoint_model_config(self, model: str) -> Dict[str, Any]:
+        """Create configuration for a model served by an OpenAI-compatible endpoint."""
+        config = {
+            "name": self._sanitize_model_name(model),
+            "type": "openai_compatible",
+            "model_id": model,
+            "api_key": os.environ.get(self.api_key_env),
+            "base_url": self.api_base_url,
+            # Per-generation budget, as in the paper's protocol (not the context length)
+            "max_tokens": self.max_new_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_concurrency": self.api_concurrency,
+        }
+        if self.api_provider:
+            providers = [p.strip() for p in self.api_provider.split(",") if p.strip()]
+            config["extra_body"] = {"provider": {"order": providers, "allow_fallbacks": False}}
+        return config
+
     def _is_huggingface_model(self, model: str) -> bool:
         """Check if a model is a HuggingFace model."""
         # Common HuggingFace model patterns
@@ -405,14 +464,25 @@ class EvaluationConfig:
     def get_task_configs(self, task_type: str = "code_generation_summarization") -> List[Dict[str, Any]]:
         """Generate task configurations based on task type."""
         if task_type == "code_generation_summarization":
+            generation_config = {
+                "type": "code_generation",
+                "language": "python",
+                "prompt_template": "Generate Python code for the following task: \n{description}\nReturn only the code, without explanations or comments.",
+            }
+            if self.summary_language:
+                # Same loop, summaries written in another natural language;
+                # the task's default prompt mirrors the English one below.
+                return [
+                    generation_config,
+                    {
+                        "type": "code_summarization_multilingual",
+                        "summary_language": self.summary_language,
+                    },
+                ]
             return [
+                generation_config,
                 {
-                    "type": "code_generation",
-                    "language": "python",
-                    "prompt_template": "Generate Python code for the following task: \n{description}\nReturn only the code, without explanations or comments.",
-                },
-                {
-                    "type": "code_summarization", 
+                    "type": "code_summarization",
                     "prompt_template": "Use one sentence to summarize the following code and start with 'write a python function to':\n\n```\n{code}\n```\n\n```\nwrite a python function to\n```",
                 },
             ]

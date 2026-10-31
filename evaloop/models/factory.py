@@ -7,6 +7,7 @@ from .base import BaseLLM
 from .open_source import HuggingFaceLLM
 from .open_source_vllm import VllmLLM
 from .closed_source import OpenAILLM
+from .openai_compatible import OpenAICompatibleLLM
 
 
 class ModelFactory:
@@ -48,6 +49,8 @@ class ModelFactory:
             return VllmLLM(model_config)
         elif model_type in ["openai", "chatgpt", "closed_source"]:
             return OpenAILLM(model_config)
+        elif model_type == "openai_compatible":
+            return OpenAICompatibleLLM(model_config)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
     
@@ -66,5 +69,6 @@ class ModelFactory:
             "vllm",
             "openai",
             "chatgpt",
-            "closed_source"
+            "closed_source",
+            "openai_compatible",
         ]
