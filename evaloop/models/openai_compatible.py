@@ -15,6 +15,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
 
+from openai import OpenAI
+
 from .base import ModelUnavailableError
 from .closed_source import OpenAILLM
 
@@ -35,6 +37,10 @@ class OpenAICompatibleLLM(OpenAILLM):
                 f"No API key for {model_config.get('base_url')}. Set the environment variable named by api_key_env."
             )
         super().__init__(model_config)
+        # A stalled provider must fail within minutes, not the SDK's default 10 min x 3 attempts
+        self.request_timeout = model_config.get("request_timeout", 90.0)
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url,
+                             timeout=self.request_timeout, max_retries=1)
         self.max_concurrency = model_config.get("max_concurrency", 16)
         self.extra_body = model_config.get("extra_body")
         # Extra attempts on top of OpenAILLM's own retries, with growing waits

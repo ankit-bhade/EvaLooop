@@ -155,6 +155,12 @@ class TestOpenAICompatibleLLM:
         with pytest.raises(ValueError, match="API key"):
             llm_class({"name": "m", "model_id": "m", "api_key": None, "base_url": OPENROUTER})
 
+    def test_requests_time_out(self, llm_class):
+        llm = self.make_llm(llm_class)
+        assert llm.client.timeout == 90.0
+        assert llm.client.max_retries == 1
+        assert self.make_llm(llm_class, request_timeout=5).client.timeout == 5
+
     def test_batch_keeps_input_order(self, llm_class):
         llm = self.make_llm(llm_class, max_concurrency=4)
         prompts = [f"q{i}" for i in range(20)]
