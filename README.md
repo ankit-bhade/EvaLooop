@@ -132,6 +132,9 @@ evaloop evaluate --model "google/gemma-3-12b-it" \
                  --api_provider "deepinfra/bf16" --api_concurrency 16 \
                  --summary_language spanish --experiment_name gemma_spanish --resume
 python scripts/summarize_runs.py results/*_results.json --output summary.csv
+# English vs translated loops: paired comparison, language check, failed-loop view for manual inspection
+python scripts/analyze_multilingual.py results/*_results.json --data_package path/to/assignment4-data/loops \
+       --output_dir analysis
 ```
 
 | Option | What it does |
@@ -158,8 +161,9 @@ instead of being tested as code and counted as a robustness failure; resume afte
   and records `model_id`, `max_tasks` and `subset_seed` in results.
 - `evaloop/core/evaluator.py`: no longer crashes with `KeyError: 'plus_details'` when the tester itself
   fails (it returns only `success` and `error` then).
-- New `scripts/summarize_runs.py` (summary.csv: pass@1 and ASL_pow per run), `notebooks/run_on_colab.ipynb`,
-  and `tests/test_endpoint_and_run_state.py`.
+- New `scripts/summarize_runs.py` (summary.csv: pass@1 and ASL_pow per run), `scripts/analyze_multilingual.py`
+  (every other number in the report, plus `failed_loops.md`/`.csv` for manual inspection),
+  `notebooks/run_on_colab.ipynb`, `tests/test_endpoint_and_run_state.py` and `tests/test_analysis_scripts.py`.
 
 ## 🛠️ CLI Reference
 
